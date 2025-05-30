@@ -17,7 +17,7 @@ import torch.nn as nn
 import torch.utils.checkpoint
 from torch.nn.init import trunc_normal_
 
-from dinov2.layers import Mlp, PatchEmbed, SwiGLUFFNFused, MemEffAttention, NestedTensorBlock as Block
+from dinov2.layers import Mlp, PatchEmbed, SwiGLUFFNFused, Attention, MemEffAttention, NestedTensorBlock as Block
 
 
 logger = logging.getLogger("dinov2")
@@ -134,22 +134,28 @@ class DinoVisionTransformer(nn.Module):
         else:
             raise NotImplementedError
 
-        blocks_list = [
-            block_fn(
-                dim=embed_dim,
-                num_heads=num_heads,
-                mlp_ratio=mlp_ratio,
-                qkv_bias=qkv_bias,
-                proj_bias=proj_bias,
-                ffn_bias=ffn_bias,
-                drop_path=dpr[i],
-                norm_layer=norm_layer,
-                act_layer=act_layer,
-                ffn_layer=ffn_layer,
-                init_values=init_values,
+        blocks_list = []
+        for i in range(depth):
+            current_attn_class = MemEffAttention # 默认使用 MemEffAttention
+            if i == depth - 1: # 如果是最后一个块
+                current_attn_class = Attention # 最后一个块使用 Attention
+
+            blocks_list.append(
+                block_fn( # block_fn 可能是 partial(Block, ...)
+                    dim=embed_dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    qkv_bias=qkv_bias,
+                    proj_bias=proj_bias,
+                    ffn_bias=ffn_bias,
+                    drop_path=dpr[i],
+                    norm_layer=norm_layer,
+                    act_layer=act_layer,
+                    ffn_layer=ffn_layer, # 使用内部变量
+                    attn_class=current_attn_class, # 动态设置注意力类
+                    init_values=init_values,
+                )
             )
-            for i in range(depth)
-        ]
         if block_chunks > 0:
             self.chunked_blocks = True
             chunked_blocks = []

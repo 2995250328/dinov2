@@ -13,6 +13,7 @@ import warnings
 
 from torch import Tensor
 from torch import nn
+from typing import Tuple
 
 
 logger = logging.getLogger("dinov2")
@@ -52,6 +53,7 @@ class Attention(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim, bias=proj_bias)
         self.proj_drop = nn.Dropout(proj_drop)
+        self.attn_weights = None
 
     def forward(self, x: Tensor) -> Tensor:
         B, N, C = x.shape
@@ -60,10 +62,11 @@ class Attention(nn.Module):
         q, k, v = qkv[0] * self.scale, qkv[1], qkv[2]
         attn = q @ k.transpose(-2, -1)
 
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
+        attn_weights = attn.softmax(dim=-1)
+        self.attn_weights = attn_weights.detach()
+        attn_output = self.attn_drop(attn_weights)
 
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = (attn_output @ v).transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -83,6 +86,12 @@ class MemEffAttention(Attention):
 
         x = memory_efficient_attention(q, k, v, attn_bias=attn_bias)
         x = x.reshape([B, N, C])
+
+        # 在 MemEffAttention 中，如果使用了 memory_efficient_attention，
+        # 无法直接获取并存储注意力矩阵到 self.attn_weights_storage。
+        # 这是 memory_efficient_attention 的设计限制。
+        # 因此，为了确保能获取注意力矩阵，仍需确保最后一个块是 Attention 实例。
+        self.attn_weights_storage = None # 在 MemEffAttention 中不存储，或设为 None
 
         x = self.proj(x)
         x = self.proj_drop(x)
